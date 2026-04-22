@@ -4,98 +4,80 @@ import java.util.concurrent.atomic.*;
 
 public class week1and2 {
 
-    static class UsernameChecker {
+    static class InventoryManager {
 
-        // username → userId
-        private ConcurrentHashMap<String, Integer> userMap;
+        // productId → stock count
+        private ConcurrentHashMap<String, AtomicInteger> stockMap;
 
-        // username → attempt count
-        private ConcurrentHashMap<String, AtomicInteger> attemptMap;
+        // productId → waiting queue (FIFO)
+        private ConcurrentHashMap<String, ConcurrentLinkedQueue<Integer>> waitlistMap;
 
-        public UsernameChecker() {
-            userMap = new ConcurrentHashMap<>();
-            attemptMap = new ConcurrentHashMap<>();
+        public InventoryManager() {
+            stockMap = new ConcurrentHashMap<>();
+            waitlistMap = new ConcurrentHashMap<>();
         }
 
-        // Check availability in O(1)
-        public boolean checkAvailability(String username) {
-            // Track attempts (thread-safe)
-            attemptMap.putIfAbsent(username, new AtomicInteger(0));
-            attemptMap.get(username).incrementAndGet();
-
-            return !userMap.containsKey(username);
+        // Add product
+        public void addProduct(String productId, int stock) {
+            stockMap.put(productId, new AtomicInteger(stock));
+            waitlistMap.put(productId, new ConcurrentLinkedQueue<>());
         }
 
-        // Register username
-        public void registerUser(String username, int userId) {
-            userMap.put(username, userId);
+        // Check stock in O(1)
+        public int checkStock(String productId) {
+            AtomicInteger stock = stockMap.get(productId);
+            return (stock != null) ? stock.get() : 0;
         }
 
-        // Suggest alternatives
-        public List<String> suggestAlternatives(String username) {
-            List<String> suggestions = new ArrayList<>();
+        // Purchase item (thread-safe, no overselling)
+        public String purchaseItem(String productId, int userId) {
+            AtomicInteger stock = stockMap.get(productId);
 
-            // Add numbers
-            for (int i = 1; i <= 5; i++) {
-                String candidate = username + i;
-                if (!userMap.containsKey(candidate)) {
-                    suggestions.add(candidate);
+            if (stock == null) return "Product not found";
+
+            while (true) {
+                int currentStock = stock.get();
+
+                // If stock finished → add to waitlist
+                if (currentStock <= 0) {
+                    waitlistMap.get(productId).add(userId);
+                    int position = waitlistMap.get(productId).size();
+                    return "Added to waiting list, position #" + position;
                 }
-            }
 
-            // Replace underscore with dot
-            if (username.contains("_")) {
-                String alt = username.replace("_", ".");
-                if (!userMap.containsKey(alt)) {
-                    suggestions.add(alt);
+                // Atomic decrement (prevents overselling)
+                if (stock.compareAndSet(currentStock, currentStock - 1)) {
+                    return "Success, remaining: " + (currentStock - 1);
                 }
+                // else retry (another thread modified stock)
             }
-
-            // Add random suffix
-            suggestions.add(username + new Random().nextInt(1000));
-
-            return suggestions;
         }
 
-        // Get most attempted username
-        public String getMostAttempted() {
-            String maxUser = null;
-            int maxCount = 0;
-
-            for (Map.Entry<String, AtomicInteger> entry : attemptMap.entrySet()) {
-                int count = entry.getValue().get();
-                if (count > maxCount) {
-                    maxCount = count;
-                    maxUser = entry.getKey();
-                }
-            }
-
-            return maxUser + " (" + maxCount + " attempts)";
+        // Get waiting list
+        public List<Integer> getWaitlist(String productId) {
+            return new ArrayList<>(waitlistMap.get(productId));
         }
     }
 
     // =========================
-    // Main Method (Testing)
+    // MAIN METHOD (TEST)
     // =========================
     public static void main(String[] args) {
-        UsernameChecker checker = new UsernameChecker();
 
-        // Pre-register users
-        checker.registerUser("john_doe", 1);
-        checker.registerUser("admin", 2);
+        InventoryManager manager = new InventoryManager();
 
-        // Availability checks
-        System.out.println(checker.checkAvailability("john_doe"));   // false
-        System.out.println(checker.checkAvailability("jane_smith")); // true
+        manager.addProduct("IPHONE15_256GB", 5);
 
-        // Suggestions
-        System.out.println(checker.suggestAlternatives("john_doe"));
+        // Simulate multiple users
+        for (int i = 1; i <= 8; i++) {
+            String result = manager.purchaseItem("IPHONE15_256GB", i);
+            System.out.println("User " + i + ": " + result);
+        }
 
-        // Simulate attempts
-        for (int i = 0; i < 5; i++) checker.checkAvailability("admin");
-        for (int i = 0; i < 3; i++) checker.checkAvailability("john_doe");
+        // Check remaining stock
+        System.out.println("Stock left: " + manager.checkStock("IPHONE15_256GB"));
 
-        // Most attempted
-        System.out.println(checker.getMostAttempted());
+        // Waiting list
+        System.out.println("Waitlist: " + manager.getWaitlist("IPHONE15_256GB"));
     }
 }
