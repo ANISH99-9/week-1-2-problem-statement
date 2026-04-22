@@ -1,95 +1,75 @@
 import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.*;
 
 public class week1and2 {
 
-    // Token Bucket Class
-    static class TokenBucket {
-        private final int maxTokens;
-        private final double refillRatePerSec;
-
-        private double tokens;
-        private long lastRefillTime;
-
-        public TokenBucket(int maxTokens, double refillRatePerSec) {
-            this.maxTokens = maxTokens;
-            this.refillRatePerSec = refillRatePerSec;
-            this.tokens = maxTokens;
-            this.lastRefillTime = System.currentTimeMillis();
-        }
-
-        // Thread-safe method
-        public synchronized boolean allowRequest() {
-            refill();
-
-            if (tokens >= 1) {
-                tokens -= 1;
-                return true;
-            }
-            return false;
-        }
-
-        // Refill tokens based on time passed
-        private void refill() {
-            long now = System.currentTimeMillis();
-            double seconds = (now - lastRefillTime) / 1000.0;
-
-            double tokensToAdd = seconds * refillRatePerSec;
-            tokens = Math.min(maxTokens, tokens + tokensToAdd);
-
-            lastRefillTime = now;
-        }
-
-        public int getRemainingTokens() {
-            return (int) tokens;
-        }
-
-        public long getRetryAfterSeconds() {
-            if (tokens >= 1) return 0;
-
-            double needed = 1 - tokens;
-            return (long) Math.ceil(needed / refillRatePerSec);
-        }
+    // Trie Node
+    static class TrieNode {
+        Map<Character, TrieNode> children = new HashMap<>();
+        List<String> words = new ArrayList<>(); // store words with this prefix
     }
 
-    // Rate Limiter
-    static class RateLimiter {
+    static class AutocompleteSystem {
 
-        private ConcurrentHashMap<String, TokenBucket> clientMap;
+        private TrieNode root;
+        private Map<String, Integer> frequencyMap;
+        private static final int TOP_K = 10;
 
-        private static final int MAX_REQUESTS = 1000;
-        private static final double REFILL_RATE = MAX_REQUESTS / 3600.0; // per second
-
-        public RateLimiter() {
-            clientMap = new ConcurrentHashMap<>();
+        public AutocompleteSystem() {
+            root = new TrieNode();
+            frequencyMap = new HashMap<>();
         }
 
-        public String checkRateLimit(String clientId) {
+        // Insert query
+        public void addQuery(String query) {
+            frequencyMap.put(query, frequencyMap.getOrDefault(query, 0) + 1);
 
-            clientMap.putIfAbsent(clientId,
-                    new TokenBucket(MAX_REQUESTS, REFILL_RATE));
+            TrieNode node = root;
+            for (char c : query.toCharArray()) {
+                node.children.putIfAbsent(c, new TrieNode());
+                node = node.children.get(c);
 
-            TokenBucket bucket = clientMap.get(clientId);
-
-            if (bucket.allowRequest()) {
-                return "Allowed (" + bucket.getRemainingTokens() + " requests remaining)";
-            } else {
-                return "Denied (0 requests remaining, retry after "
-                        + bucket.getRetryAfterSeconds() + "s)";
+                // store query for this prefix
+                if (!node.words.contains(query)) {
+                    node.words.add(query);
+                }
             }
         }
 
-        public String getRateLimitStatus(String clientId) {
-            TokenBucket bucket = clientMap.get(clientId);
+        // Search top 10 suggestions
+        public List<String> search(String prefix) {
+            TrieNode node = root;
 
-            if (bucket == null) return "Client not found";
+            for (char c : prefix.toCharArray()) {
+                if (!node.children.containsKey(c)) {
+                    return new ArrayList<>();
+                }
+                node = node.children.get(c);
+            }
 
-            int used = MAX_REQUESTS - bucket.getRemainingTokens();
+            // Min-heap for top K
+            PriorityQueue<String> pq = new PriorityQueue<>(
+                    (a, b) -> frequencyMap.get(a) - frequencyMap.get(b)
+            );
 
-            return "{used: " + used +
-                    ", limit: " + MAX_REQUESTS +
-                    ", remaining: " + bucket.getRemainingTokens() + "}";
+            for (String word : node.words) {
+                pq.offer(word);
+                if (pq.size() > TOP_K) {
+                    pq.poll();
+                }
+            }
+
+            List<String> result = new ArrayList<>();
+            while (!pq.isEmpty()) {
+                result.add(pq.poll());
+            }
+
+            Collections.reverse(result); // highest freq first
+            return result;
+        }
+
+        // Update frequency (when user searches)
+        public void updateFrequency(String query) {
+            addQuery(query); // same as insert
         }
     }
 
@@ -98,21 +78,23 @@ public class week1and2 {
     // =========================
     public static void main(String[] args) {
 
-        RateLimiter limiter = new RateLimiter();
+        AutocompleteSystem system = new AutocompleteSystem();
 
-        String client = "abc123";
+        // Add queries
+        system.addQuery("java tutorial");
+        system.addQuery("javascript");
+        system.addQuery("java download");
+        system.addQuery("java tutorial");
+        system.addQuery("java tutorial");
 
-        // Simulate requests
-        for (int i = 0; i < 5; i++) {
-            System.out.println(limiter.checkRateLimit(client));
-        }
+        // Search
+        System.out.println(system.search("jav"));
 
-        // Force exhaustion quickly
-        for (int i = 0; i < 1000; i++) {
-            limiter.checkRateLimit(client);
-        }
+        // Update frequency
+        system.updateFrequency("java 21 features");
+        system.updateFrequency("java 21 features");
+        system.updateFrequency("java 21 features");
 
-        System.out.println(limiter.checkRateLimit(client)); // should deny
-        System.out.println(limiter.getRateLimitStatus(client));
+        System.out.println(system.search("java"));
     }
 }
