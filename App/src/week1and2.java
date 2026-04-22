@@ -2,122 +2,174 @@ import java.util.*;
 
 public class week1and2 {
 
-    static class ParkingLot {
+    // Transaction class
+    static class Transaction {
+        int id;
+        int amount;
+        String merchant;
+        String account;
+        long time; // epoch milliseconds
 
-        static class Spot {
-            String plate;
-            long entryTime;
-            boolean isDeleted;
-
-            Spot(String plate) {
-                this.plate = plate;
-                this.entryTime = System.currentTimeMillis();
-                this.isDeleted = false;
-            }
+        public Transaction(int id, int amount, String merchant, String account, long time) {
+            this.id = id;
+            this.amount = amount;
+            this.merchant = merchant;
+            this.account = account;
+            this.time = time;
         }
+    }
 
-        private Spot[] table;
-        private int capacity;
-        private int size;
-        private int totalProbes;
+    static class TransactionAnalyzer {
 
-        public ParkingLot(int capacity) {
-            this.capacity = capacity;
-            this.table = new Spot[capacity];
-            this.size = 0;
-            this.totalProbes = 0;
-        }
+        // =========================
+        // 1. Classic Two-Sum
+        // =========================
+        public List<int[]> findTwoSum(List<Transaction> txs, int target) {
+            Map<Integer, Transaction> map = new HashMap<>();
+            List<int[]> result = new ArrayList<>();
 
-        // Hash function
-        private int hash(String plate) {
-            return Math.abs(plate.hashCode()) % capacity;
-        }
+            for (Transaction t : txs) {
+                int complement = target - t.amount;
 
-        // Park vehicle (linear probing)
-        public String parkVehicle(String plate) {
-            int index = hash(plate);
-            int probes = 0;
-
-            for (int i = 0; i < capacity; i++) {
-                int pos = (index + i) % capacity;
-
-                if (table[pos] == null || table[pos].isDeleted) {
-                    table[pos] = new Spot(plate);
-                    size++;
-                    totalProbes += probes;
-
-                    return "Assigned spot #" + pos + " (" + probes + " probes)";
+                if (map.containsKey(complement)) {
+                    result.add(new int[]{map.get(complement).id, t.id});
                 }
 
-                probes++;
+                map.put(t.amount, t);
             }
 
-            return "Parking Full";
+            return result;
         }
 
-        // Exit vehicle
-        public String exitVehicle(String plate) {
-            int index = hash(plate);
+        // =========================
+        // 2. Two-Sum with 1-hour window
+        // =========================
+        public List<int[]> findTwoSumWithTime(List<Transaction> txs, int target) {
+            List<int[]> result = new ArrayList<>();
+            Map<Integer, List<Transaction>> map = new HashMap<>();
 
-            for (int i = 0; i < capacity; i++) {
-                int pos = (index + i) % capacity;
+            for (Transaction t : txs) {
+                int complement = target - t.amount;
 
-                if (table[pos] != null && !table[pos].isDeleted &&
-                        table[pos].plate.equals(plate)) {
+                if (map.containsKey(complement)) {
+                    for (Transaction prev : map.get(complement)) {
+                        if (Math.abs(t.time - prev.time) <= 3600000) { // 1 hour
+                            result.add(new int[]{prev.id, t.id});
+                        }
+                    }
+                }
 
-                    long durationMillis = System.currentTimeMillis() - table[pos].entryTime;
-                    double hours = durationMillis / (1000.0 * 60 * 60);
+                map.putIfAbsent(t.amount, new ArrayList<>());
+                map.get(t.amount).add(t);
+            }
 
-                    double fee = hours * 5; // $5 per hour
+            return result;
+        }
 
-                    table[pos].isDeleted = true;
-                    size--;
+        // =========================
+        // 3. K-Sum (General)
+        // =========================
+        public List<List<Integer>> findKSum(int[] nums, int target, int k) {
+            Arrays.sort(nums);
+            return kSumHelper(nums, target, k, 0);
+        }
 
-                    return "Spot #" + pos + " freed, Duration: " +
-                            String.format("%.2f", hours) +
-                            "h, Fee: $" + String.format("%.2f", fee);
+        private List<List<Integer>> kSumHelper(int[] nums, int target, int k, int start) {
+            List<List<Integer>> res = new ArrayList<>();
+
+            if (k == 2) {
+                Map<Integer, Integer> map = new HashMap<>();
+                for (int i = start; i < nums.length; i++) {
+                    int comp = target - nums[i];
+                    if (map.containsKey(comp)) {
+                        res.add(Arrays.asList(comp, nums[i]));
+                    }
+                    map.put(nums[i], i);
+                }
+                return res;
+            }
+
+            for (int i = start; i < nums.length; i++) {
+                List<List<Integer>> sub = kSumHelper(nums, target - nums[i], k - 1, i + 1);
+
+                for (List<Integer> list : sub) {
+                    List<Integer> newList = new ArrayList<>();
+                    newList.add(nums[i]);
+                    newList.addAll(list);
+                    res.add(newList);
                 }
             }
 
-            return "Vehicle not found";
+            return res;
         }
 
-        // Find nearest available spot
-        public int findNearest() {
-            for (int i = 0; i < capacity; i++) {
-                if (table[i] == null || table[i].isDeleted) {
-                    return i;
+        // =========================
+        // 4. Duplicate Detection
+        // =========================
+        public List<String> detectDuplicates(List<Transaction> txs) {
+            Map<String, List<Transaction>> map = new HashMap<>();
+
+            for (Transaction t : txs) {
+                String key = t.amount + "_" + t.merchant;
+
+                map.putIfAbsent(key, new ArrayList<>());
+                map.get(key).add(t);
+            }
+
+            List<String> result = new ArrayList<>();
+
+            for (String key : map.keySet()) {
+                List<Transaction> list = map.get(key);
+
+                Set<String> accounts = new HashSet<>();
+                for (Transaction t : list) {
+                    accounts.add(t.account);
+                }
+
+                if (accounts.size() > 1) {
+                    result.add("Duplicate: " + key + " accounts=" + accounts);
                 }
             }
-            return -1;
-        }
 
-        // Statistics
-        public String getStatistics() {
-            double occupancy = (size * 100.0) / capacity;
-            double avgProbes = size == 0 ? 0 : (double) totalProbes / size;
-
-            return "Occupancy: " + String.format("%.2f", occupancy) +
-                    "%, Avg Probes: " + String.format("%.2f", avgProbes);
+            return result;
         }
     }
 
     // =========================
     // MAIN METHOD (TEST)
     // =========================
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
 
-        ParkingLot lot = new ParkingLot(10);
+        TransactionAnalyzer analyzer = new TransactionAnalyzer();
 
-        System.out.println(lot.parkVehicle("ABC-1234"));
-        System.out.println(lot.parkVehicle("ABC-1235"));
-        System.out.println(lot.parkVehicle("XYZ-9999"));
+        List<Transaction> txs = new ArrayList<>();
 
-        Thread.sleep(2000); // simulate time
+        long now = System.currentTimeMillis();
 
-        System.out.println(lot.exitVehicle("ABC-1234"));
+        txs.add(new Transaction(1, 500, "StoreA", "acc1", now));
+        txs.add(new Transaction(2, 300, "StoreB", "acc2", now + 1000));
+        txs.add(new Transaction(3, 200, "StoreC", "acc3", now + 2000));
+        txs.add(new Transaction(4, 500, "StoreA", "acc4", now + 3000));
 
-        System.out.println("Nearest spot: " + lot.findNearest());
-        System.out.println(lot.getStatistics());
+        // Two Sum
+        System.out.println("TwoSum:");
+        for (int[] pair : analyzer.findTwoSum(txs, 500)) {
+            System.out.println(Arrays.toString(pair));
+        }
+
+        // Two Sum with Time
+        System.out.println("\nTwoSum (1hr window):");
+        for (int[] pair : analyzer.findTwoSumWithTime(txs, 500)) {
+            System.out.println(Arrays.toString(pair));
+        }
+
+        // K Sum
+        System.out.println("\nKSum:");
+        int[] nums = {500, 300, 200};
+        System.out.println(analyzer.findKSum(nums, 1000, 3));
+
+        // Duplicate Detection
+        System.out.println("\nDuplicates:");
+        System.out.println(analyzer.detectDuplicates(txs));
     }
 }
