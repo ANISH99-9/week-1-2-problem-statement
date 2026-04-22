@@ -1,134 +1,118 @@
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
 public class week1and2 {
 
-    static class AnalyticsSystem {
+    // Token Bucket Class
+    static class TokenBucket {
+        private final int maxTokens;
+        private final double refillRatePerSec;
 
-        // page → total visits
-        private ConcurrentHashMap<String, Integer> pageViews;
+        private double tokens;
+        private long lastRefillTime;
 
-        // page → unique users
-        private ConcurrentHashMap<String, Set<String>> uniqueVisitors;
-
-        // source → count
-        private ConcurrentHashMap<String, Integer> sourceCount;
-
-        public AnalyticsSystem() {
-            pageViews = new ConcurrentHashMap<>();
-            uniqueVisitors = new ConcurrentHashMap<>();
-            sourceCount = new ConcurrentHashMap<>();
-
-            startDashboardUpdater(); // auto update every 5 sec
+        public TokenBucket(int maxTokens, double refillRatePerSec) {
+            this.maxTokens = maxTokens;
+            this.refillRatePerSec = refillRatePerSec;
+            this.tokens = maxTokens;
+            this.lastRefillTime = System.currentTimeMillis();
         }
 
-        // Process incoming event
-        public void processEvent(String url, String userId, String source) {
+        // Thread-safe method
+        public synchronized boolean allowRequest() {
+            refill();
 
-            // Update page views
-            pageViews.merge(url, 1, Integer::sum);
-
-            // Update unique users
-            uniqueVisitors.putIfAbsent(url, ConcurrentHashMap.newKeySet());
-            uniqueVisitors.get(url).add(userId);
-
-            // Update traffic source
-            sourceCount.merge(source, 1, Integer::sum);
-        }
-
-        // Get top 10 pages
-        public List<String> getTopPages() {
-            PriorityQueue<Map.Entry<String, Integer>> pq =
-                    new PriorityQueue<>(Map.Entry.comparingByValue());
-
-            for (Map.Entry<String, Integer> entry : pageViews.entrySet()) {
-                pq.offer(entry);
-                if (pq.size() > 10) pq.poll();
+            if (tokens >= 1) {
+                tokens -= 1;
+                return true;
             }
-
-            List<String> result = new ArrayList<>();
-            while (!pq.isEmpty()) {
-                Map.Entry<String, Integer> e = pq.poll();
-                String page = e.getKey();
-                int views = e.getValue();
-                int unique = uniqueVisitors.get(page).size();
-
-                result.add(page + " - " + views + " views (" + unique + " unique)");
-            }
-
-            Collections.reverse(result); // highest first
-            return result;
+            return false;
         }
 
-        // Get traffic sources
-        public Map<String, Integer> getSourceStats() {
-            return sourceCount;
+        // Refill tokens based on time passed
+        private void refill() {
+            long now = System.currentTimeMillis();
+            double seconds = (now - lastRefillTime) / 1000.0;
+
+            double tokensToAdd = seconds * refillRatePerSec;
+            tokens = Math.min(maxTokens, tokens + tokensToAdd);
+
+            lastRefillTime = now;
         }
 
-        // Dashboard print
-        public void getDashboard() {
-            System.out.println("\n===== DASHBOARD =====");
-
-            System.out.println("Top Pages:");
-            int rank = 1;
-            for (String s : getTopPages()) {
-                System.out.println(rank++ + ". " + s);
-            }
-
-            System.out.println("\nTraffic Sources:");
-            int total = sourceCount.values().stream().mapToInt(i -> i).sum();
-
-            for (String source : sourceCount.keySet()) {
-                int count = sourceCount.get(source);
-                double percent = (count * 100.0) / total;
-                System.out.println(source + ": " + String.format("%.2f", percent) + "%");
-            }
-
-            System.out.println("=====================\n");
+        public int getRemainingTokens() {
+            return (int) tokens;
         }
 
-        // Auto refresh dashboard every 5 sec
-        private void startDashboardUpdater() {
-            Thread t = new Thread(() -> {
-                while (true) {
-                    try {
-                        Thread.sleep(5000);
-                        getDashboard();
-                    } catch (InterruptedException e) {
-                        break;
-                    }
-                }
-            });
+        public long getRetryAfterSeconds() {
+            if (tokens >= 1) return 0;
 
-            t.setDaemon(true);
-            t.start();
+            double needed = 1 - tokens;
+            return (long) Math.ceil(needed / refillRatePerSec);
+        }
+    }
+
+    // Rate Limiter
+    static class RateLimiter {
+
+        private ConcurrentHashMap<String, TokenBucket> clientMap;
+
+        private static final int MAX_REQUESTS = 1000;
+        private static final double REFILL_RATE = MAX_REQUESTS / 3600.0; // per second
+
+        public RateLimiter() {
+            clientMap = new ConcurrentHashMap<>();
+        }
+
+        public String checkRateLimit(String clientId) {
+
+            clientMap.putIfAbsent(clientId,
+                    new TokenBucket(MAX_REQUESTS, REFILL_RATE));
+
+            TokenBucket bucket = clientMap.get(clientId);
+
+            if (bucket.allowRequest()) {
+                return "Allowed (" + bucket.getRemainingTokens() + " requests remaining)";
+            } else {
+                return "Denied (0 requests remaining, retry after "
+                        + bucket.getRetryAfterSeconds() + "s)";
+            }
+        }
+
+        public String getRateLimitStatus(String clientId) {
+            TokenBucket bucket = clientMap.get(clientId);
+
+            if (bucket == null) return "Client not found";
+
+            int used = MAX_REQUESTS - bucket.getRemainingTokens();
+
+            return "{used: " + used +
+                    ", limit: " + MAX_REQUESTS +
+                    ", remaining: " + bucket.getRemainingTokens() + "}";
         }
     }
 
     // =========================
     // MAIN METHOD (TEST)
     // =========================
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
 
-        AnalyticsSystem system = new AnalyticsSystem();
+        RateLimiter limiter = new RateLimiter();
 
-        // Simulate real-time traffic
-        String[] urls = {"/news", "/sports", "/tech"};
-        String[] sources = {"google", "facebook", "direct"};
+        String client = "abc123";
 
-        Random rand = new Random();
-
-        for (int i = 1; i <= 50; i++) {
-            String url = urls[rand.nextInt(urls.length)];
-            String user = "user_" + rand.nextInt(20);
-            String source = sources[rand.nextInt(sources.length)];
-
-            system.processEvent(url, user, source);
-
-            Thread.sleep(100); // simulate stream
+        // Simulate requests
+        for (int i = 0; i < 5; i++) {
+            System.out.println(limiter.checkRateLimit(client));
         }
 
-        // Let dashboard run for a bit
-        Thread.sleep(10000);
+        // Force exhaustion quickly
+        for (int i = 0; i < 1000; i++) {
+            limiter.checkRateLimit(client);
+        }
+
+        System.out.println(limiter.checkRateLimit(client)); // should deny
+        System.out.println(limiter.getRateLimitStatus(client));
     }
 }
