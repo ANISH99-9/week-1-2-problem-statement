@@ -2,99 +2,122 @@ import java.util.*;
 
 public class week1and2 {
 
-    // Trie Node
-    static class TrieNode {
-        Map<Character, TrieNode> children = new HashMap<>();
-        List<String> words = new ArrayList<>(); // store words with this prefix
-    }
+    static class ParkingLot {
 
-    static class AutocompleteSystem {
+        static class Spot {
+            String plate;
+            long entryTime;
+            boolean isDeleted;
 
-        private TrieNode root;
-        private Map<String, Integer> frequencyMap;
-        private static final int TOP_K = 10;
-
-        public AutocompleteSystem() {
-            root = new TrieNode();
-            frequencyMap = new HashMap<>();
-        }
-
-        // Insert query
-        public void addQuery(String query) {
-            frequencyMap.put(query, frequencyMap.getOrDefault(query, 0) + 1);
-
-            TrieNode node = root;
-            for (char c : query.toCharArray()) {
-                node.children.putIfAbsent(c, new TrieNode());
-                node = node.children.get(c);
-
-                // store query for this prefix
-                if (!node.words.contains(query)) {
-                    node.words.add(query);
-                }
+            Spot(String plate) {
+                this.plate = plate;
+                this.entryTime = System.currentTimeMillis();
+                this.isDeleted = false;
             }
         }
 
-        // Search top 10 suggestions
-        public List<String> search(String prefix) {
-            TrieNode node = root;
+        private Spot[] table;
+        private int capacity;
+        private int size;
+        private int totalProbes;
 
-            for (char c : prefix.toCharArray()) {
-                if (!node.children.containsKey(c)) {
-                    return new ArrayList<>();
-                }
-                node = node.children.get(c);
-            }
-
-            // Min-heap for top K
-            PriorityQueue<String> pq = new PriorityQueue<>(
-                    (a, b) -> frequencyMap.get(a) - frequencyMap.get(b)
-            );
-
-            for (String word : node.words) {
-                pq.offer(word);
-                if (pq.size() > TOP_K) {
-                    pq.poll();
-                }
-            }
-
-            List<String> result = new ArrayList<>();
-            while (!pq.isEmpty()) {
-                result.add(pq.poll());
-            }
-
-            Collections.reverse(result); // highest freq first
-            return result;
+        public ParkingLot(int capacity) {
+            this.capacity = capacity;
+            this.table = new Spot[capacity];
+            this.size = 0;
+            this.totalProbes = 0;
         }
 
-        // Update frequency (when user searches)
-        public void updateFrequency(String query) {
-            addQuery(query); // same as insert
+        // Hash function
+        private int hash(String plate) {
+            return Math.abs(plate.hashCode()) % capacity;
+        }
+
+        // Park vehicle (linear probing)
+        public String parkVehicle(String plate) {
+            int index = hash(plate);
+            int probes = 0;
+
+            for (int i = 0; i < capacity; i++) {
+                int pos = (index + i) % capacity;
+
+                if (table[pos] == null || table[pos].isDeleted) {
+                    table[pos] = new Spot(plate);
+                    size++;
+                    totalProbes += probes;
+
+                    return "Assigned spot #" + pos + " (" + probes + " probes)";
+                }
+
+                probes++;
+            }
+
+            return "Parking Full";
+        }
+
+        // Exit vehicle
+        public String exitVehicle(String plate) {
+            int index = hash(plate);
+
+            for (int i = 0; i < capacity; i++) {
+                int pos = (index + i) % capacity;
+
+                if (table[pos] != null && !table[pos].isDeleted &&
+                        table[pos].plate.equals(plate)) {
+
+                    long durationMillis = System.currentTimeMillis() - table[pos].entryTime;
+                    double hours = durationMillis / (1000.0 * 60 * 60);
+
+                    double fee = hours * 5; // $5 per hour
+
+                    table[pos].isDeleted = true;
+                    size--;
+
+                    return "Spot #" + pos + " freed, Duration: " +
+                            String.format("%.2f", hours) +
+                            "h, Fee: $" + String.format("%.2f", fee);
+                }
+            }
+
+            return "Vehicle not found";
+        }
+
+        // Find nearest available spot
+        public int findNearest() {
+            for (int i = 0; i < capacity; i++) {
+                if (table[i] == null || table[i].isDeleted) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        // Statistics
+        public String getStatistics() {
+            double occupancy = (size * 100.0) / capacity;
+            double avgProbes = size == 0 ? 0 : (double) totalProbes / size;
+
+            return "Occupancy: " + String.format("%.2f", occupancy) +
+                    "%, Avg Probes: " + String.format("%.2f", avgProbes);
         }
     }
 
     // =========================
     // MAIN METHOD (TEST)
     // =========================
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
 
-        AutocompleteSystem system = new AutocompleteSystem();
+        ParkingLot lot = new ParkingLot(10);
 
-        // Add queries
-        system.addQuery("java tutorial");
-        system.addQuery("javascript");
-        system.addQuery("java download");
-        system.addQuery("java tutorial");
-        system.addQuery("java tutorial");
+        System.out.println(lot.parkVehicle("ABC-1234"));
+        System.out.println(lot.parkVehicle("ABC-1235"));
+        System.out.println(lot.parkVehicle("XYZ-9999"));
 
-        // Search
-        System.out.println(system.search("jav"));
+        Thread.sleep(2000); // simulate time
 
-        // Update frequency
-        system.updateFrequency("java 21 features");
-        system.updateFrequency("java 21 features");
-        system.updateFrequency("java 21 features");
+        System.out.println(lot.exitVehicle("ABC-1234"));
 
-        System.out.println(system.search("java"));
+        System.out.println("Nearest spot: " + lot.findNearest());
+        System.out.println(lot.getStatistics());
     }
 }
