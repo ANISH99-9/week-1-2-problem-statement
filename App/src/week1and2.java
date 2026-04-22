@@ -1,131 +1,105 @@
 import java.util.*;
-import java.util.concurrent.*;
 
 public class week1and2 {
 
-    static class DNSCache {
+    static class PlagiarismDetector {
 
-        // Entry class
-        class DNSEntry {
-            String ip;
-            long expiryTime;
+        // n-gram → set of document IDs
+        private Map<String, Set<String>> index;
 
-            DNSEntry(String ip, long ttlMillis) {
-                this.ip = ip;
-                this.expiryTime = System.currentTimeMillis() + ttlMillis;
-            }
+        // document → its n-grams
+        private Map<String, Set<String>> documentMap;
 
-            boolean isExpired() {
-                return System.currentTimeMillis() > expiryTime;
+        private int N = 5; // 5-gram
+
+        public PlagiarismDetector() {
+            index = new HashMap<>();
+            documentMap = new HashMap<>();
+        }
+
+        // Add document to system
+        public void addDocument(String docId, String text) {
+            Set<String> ngrams = generateNGrams(text);
+            documentMap.put(docId, ngrams);
+
+            // Build inverted index
+            for (String gram : ngrams) {
+                index.putIfAbsent(gram, new HashSet<>());
+                index.get(gram).add(docId);
             }
         }
 
-        // LRU Cache using LinkedHashMap
-        private LinkedHashMap<String, DNSEntry> cache;
+        // Generate n-grams
+        private Set<String> generateNGrams(String text) {
+            String[] words = text.toLowerCase().split("\\s+");
+            Set<String> grams = new HashSet<>();
 
-        private int capacity;
-        private int hits = 0;
-        private int misses = 0;
-        private long totalLookupTime = 0;
-
-        public DNSCache(int capacity) {
-            this.capacity = capacity;
-
-            cache = new LinkedHashMap<String, DNSEntry>(capacity, 0.75f, true) {
-                protected boolean removeEldestEntry(Map.Entry<String, DNSEntry> eldest) {
-                    return size() > DNSCache.this.capacity;
+            for (int i = 0; i <= words.length - N; i++) {
+                StringBuilder sb = new StringBuilder();
+                for (int j = 0; j < N; j++) {
+                    sb.append(words[i + j]).append(" ");
                 }
-            };
-
-            // Start cleanup thread
-            startCleanupThread();
-        }
-
-        // Resolve domain
-        public synchronized String resolve(String domain) {
-            long start = System.nanoTime();
-
-            DNSEntry entry = cache.get(domain);
-
-            // Cache HIT
-            if (entry != null && !entry.isExpired()) {
-                hits++;
-                totalLookupTime += (System.nanoTime() - start);
-                return entry.ip + " (CACHE HIT)";
+                grams.add(sb.toString().trim());
             }
 
-            // Cache MISS or expired
-            misses++;
-
-            String ip = queryUpstreamDNS(domain);
-            cache.put(domain, new DNSEntry(ip, 5000)); // TTL = 5 sec
-
-            totalLookupTime += (System.nanoTime() - start);
-            return ip + " (CACHE MISS)";
+            return grams;
         }
 
-        // Simulate upstream DNS query
-        private String queryUpstreamDNS(String domain) {
-            try {
-                Thread.sleep(50); // simulate delay (~100ms real-world)
-            } catch (InterruptedException e) {}
+        // Analyze new document
+        public void analyzeDocument(String docId, String text) {
 
-            return "192.168.1." + new Random().nextInt(255);
-        }
+            Set<String> newDocGrams = generateNGrams(text);
+            Map<String, Integer> matchCount = new HashMap<>();
 
-        // Background cleanup for expired entries
-        private void startCleanupThread() {
-            Thread cleaner = new Thread(() -> {
-                while (true) {
-                    try {
-                        Thread.sleep(2000);
-
-                        synchronized (this) {
-                            Iterator<Map.Entry<String, DNSEntry>> it = cache.entrySet().iterator();
-
-                            while (it.hasNext()) {
-                                Map.Entry<String, DNSEntry> entry = it.next();
-                                if (entry.getValue().isExpired()) {
-                                    it.remove();
-                                }
-                            }
-                        }
-
-                    } catch (InterruptedException e) {
-                        break;
+            // Count matches with existing documents
+            for (String gram : newDocGrams) {
+                if (index.containsKey(gram)) {
+                    for (String existingDoc : index.get(gram)) {
+                        matchCount.put(existingDoc,
+                                matchCount.getOrDefault(existingDoc, 0) + 1);
                     }
                 }
-            });
+            }
 
-            cleaner.setDaemon(true);
-            cleaner.start();
-        }
+            System.out.println("Extracted " + newDocGrams.size() + " n-grams\n");
 
-        // Stats
-        public String getCacheStats() {
-            int total = hits + misses;
-            double hitRate = total == 0 ? 0 : (hits * 100.0 / total);
-            double avgTime = total == 0 ? 0 : (totalLookupTime / 1e6) / total;
+            // Calculate similarity
+            for (String existingDoc : matchCount.keySet()) {
+                int matches = matchCount.get(existingDoc);
+                int total = newDocGrams.size();
 
-            return "Hit Rate: " + String.format("%.2f", hitRate) +
-                    "%, Avg Lookup Time: " + String.format("%.2f", avgTime) + " ms";
+                double similarity = (matches * 100.0) / total;
+
+                System.out.println("Matches with " + existingDoc + ": " + matches);
+                System.out.println("Similarity: " + String.format("%.2f", similarity) + "%");
+
+                if (similarity > 50) {
+                    System.out.println("⚠️ PLAGIARISM DETECTED\n");
+                } else if (similarity > 10) {
+                    System.out.println("⚠️ Suspicious\n");
+                } else {
+                    System.out.println("✅ Safe\n");
+                }
+            }
         }
     }
 
     // =========================
     // MAIN METHOD (TEST)
     // =========================
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
 
-        DNSCache dns = new DNSCache(3);
+        PlagiarismDetector detector = new PlagiarismDetector();
 
-        System.out.println(dns.resolve("google.com"));
-        System.out.println(dns.resolve("google.com"));
+        String doc1 = "this is a simple example of plagiarism detection system using hashing technique";
+        String doc2 = "this is a simple example of plagiarism detection system using advanced hashing";
+        String doc3 = "completely different content unrelated to plagiarism detection system";
 
-        Thread.sleep(6000); // wait for TTL expiry
+        // Add documents
+        detector.addDocument("essay_089", doc1);
+        detector.addDocument("essay_092", doc2);
 
-        System.out.println(dns.resolve("google.com"));
-
-        System.out.println(dns.getCacheStats());
+        // Analyze new document
+        detector.analyzeDocument("essay_123", doc3);
     }
 }
