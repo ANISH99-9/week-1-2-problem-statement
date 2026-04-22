@@ -1,105 +1,134 @@
 import java.util.*;
+import java.util.concurrent.*;
 
 public class week1and2 {
 
-    static class PlagiarismDetector {
+    static class AnalyticsSystem {
 
-        // n-gram → set of document IDs
-        private Map<String, Set<String>> index;
+        // page → total visits
+        private ConcurrentHashMap<String, Integer> pageViews;
 
-        // document → its n-grams
-        private Map<String, Set<String>> documentMap;
+        // page → unique users
+        private ConcurrentHashMap<String, Set<String>> uniqueVisitors;
 
-        private int N = 5; // 5-gram
+        // source → count
+        private ConcurrentHashMap<String, Integer> sourceCount;
 
-        public PlagiarismDetector() {
-            index = new HashMap<>();
-            documentMap = new HashMap<>();
+        public AnalyticsSystem() {
+            pageViews = new ConcurrentHashMap<>();
+            uniqueVisitors = new ConcurrentHashMap<>();
+            sourceCount = new ConcurrentHashMap<>();
+
+            startDashboardUpdater(); // auto update every 5 sec
         }
 
-        // Add document to system
-        public void addDocument(String docId, String text) {
-            Set<String> ngrams = generateNGrams(text);
-            documentMap.put(docId, ngrams);
+        // Process incoming event
+        public void processEvent(String url, String userId, String source) {
 
-            // Build inverted index
-            for (String gram : ngrams) {
-                index.putIfAbsent(gram, new HashSet<>());
-                index.get(gram).add(docId);
+            // Update page views
+            pageViews.merge(url, 1, Integer::sum);
+
+            // Update unique users
+            uniqueVisitors.putIfAbsent(url, ConcurrentHashMap.newKeySet());
+            uniqueVisitors.get(url).add(userId);
+
+            // Update traffic source
+            sourceCount.merge(source, 1, Integer::sum);
+        }
+
+        // Get top 10 pages
+        public List<String> getTopPages() {
+            PriorityQueue<Map.Entry<String, Integer>> pq =
+                    new PriorityQueue<>(Map.Entry.comparingByValue());
+
+            for (Map.Entry<String, Integer> entry : pageViews.entrySet()) {
+                pq.offer(entry);
+                if (pq.size() > 10) pq.poll();
             }
-        }
 
-        // Generate n-grams
-        private Set<String> generateNGrams(String text) {
-            String[] words = text.toLowerCase().split("\\s+");
-            Set<String> grams = new HashSet<>();
+            List<String> result = new ArrayList<>();
+            while (!pq.isEmpty()) {
+                Map.Entry<String, Integer> e = pq.poll();
+                String page = e.getKey();
+                int views = e.getValue();
+                int unique = uniqueVisitors.get(page).size();
 
-            for (int i = 0; i <= words.length - N; i++) {
-                StringBuilder sb = new StringBuilder();
-                for (int j = 0; j < N; j++) {
-                    sb.append(words[i + j]).append(" ");
-                }
-                grams.add(sb.toString().trim());
+                result.add(page + " - " + views + " views (" + unique + " unique)");
             }
 
-            return grams;
+            Collections.reverse(result); // highest first
+            return result;
         }
 
-        // Analyze new document
-        public void analyzeDocument(String docId, String text) {
+        // Get traffic sources
+        public Map<String, Integer> getSourceStats() {
+            return sourceCount;
+        }
 
-            Set<String> newDocGrams = generateNGrams(text);
-            Map<String, Integer> matchCount = new HashMap<>();
+        // Dashboard print
+        public void getDashboard() {
+            System.out.println("\n===== DASHBOARD =====");
 
-            // Count matches with existing documents
-            for (String gram : newDocGrams) {
-                if (index.containsKey(gram)) {
-                    for (String existingDoc : index.get(gram)) {
-                        matchCount.put(existingDoc,
-                                matchCount.getOrDefault(existingDoc, 0) + 1);
+            System.out.println("Top Pages:");
+            int rank = 1;
+            for (String s : getTopPages()) {
+                System.out.println(rank++ + ". " + s);
+            }
+
+            System.out.println("\nTraffic Sources:");
+            int total = sourceCount.values().stream().mapToInt(i -> i).sum();
+
+            for (String source : sourceCount.keySet()) {
+                int count = sourceCount.get(source);
+                double percent = (count * 100.0) / total;
+                System.out.println(source + ": " + String.format("%.2f", percent) + "%");
+            }
+
+            System.out.println("=====================\n");
+        }
+
+        // Auto refresh dashboard every 5 sec
+        private void startDashboardUpdater() {
+            Thread t = new Thread(() -> {
+                while (true) {
+                    try {
+                        Thread.sleep(5000);
+                        getDashboard();
+                    } catch (InterruptedException e) {
+                        break;
                     }
                 }
-            }
+            });
 
-            System.out.println("Extracted " + newDocGrams.size() + " n-grams\n");
-
-            // Calculate similarity
-            for (String existingDoc : matchCount.keySet()) {
-                int matches = matchCount.get(existingDoc);
-                int total = newDocGrams.size();
-
-                double similarity = (matches * 100.0) / total;
-
-                System.out.println("Matches with " + existingDoc + ": " + matches);
-                System.out.println("Similarity: " + String.format("%.2f", similarity) + "%");
-
-                if (similarity > 50) {
-                    System.out.println("⚠️ PLAGIARISM DETECTED\n");
-                } else if (similarity > 10) {
-                    System.out.println("⚠️ Suspicious\n");
-                } else {
-                    System.out.println("✅ Safe\n");
-                }
-            }
+            t.setDaemon(true);
+            t.start();
         }
     }
 
     // =========================
     // MAIN METHOD (TEST)
     // =========================
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
 
-        PlagiarismDetector detector = new PlagiarismDetector();
+        AnalyticsSystem system = new AnalyticsSystem();
 
-        String doc1 = "this is a simple example of plagiarism detection system using hashing technique";
-        String doc2 = "this is a simple example of plagiarism detection system using advanced hashing";
-        String doc3 = "completely different content unrelated to plagiarism detection system";
+        // Simulate real-time traffic
+        String[] urls = {"/news", "/sports", "/tech"};
+        String[] sources = {"google", "facebook", "direct"};
 
-        // Add documents
-        detector.addDocument("essay_089", doc1);
-        detector.addDocument("essay_092", doc2);
+        Random rand = new Random();
 
-        // Analyze new document
-        detector.analyzeDocument("essay_123", doc3);
+        for (int i = 1; i <= 50; i++) {
+            String url = urls[rand.nextInt(urls.length)];
+            String user = "user_" + rand.nextInt(20);
+            String source = sources[rand.nextInt(sources.length)];
+
+            system.processEvent(url, user, source);
+
+            Thread.sleep(100); // simulate stream
+        }
+
+        // Let dashboard run for a bit
+        Thread.sleep(10000);
     }
 }
